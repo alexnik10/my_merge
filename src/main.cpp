@@ -1,6 +1,8 @@
 #include <iostream>
+extern "C" {
 #include "RDXJ.h"
 #include "RDXY.h"
+}
 
 void TestRDXMerge() {
   std::cout << "Testing RDX Merge...\n";
