@@ -1,3 +1,6 @@
 [submodule "librdx"]
 	path = librdx
 	url = https://github.com/gritzko/librdx
+[submodule "rocksdb"]
+	path = rocksdb
+	url = https://github.com/facebook/rocksdb
