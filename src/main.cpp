@@ -42,6 +42,8 @@ int my_merge_main() {
     const char* input1 = "<1:2>,<1:1:3>";
     const char* input2 = "{3:4,4:5,\"seven\"}";
 
+    char* result;
+
     // Инициализация буферов
     if (Bu8map(output, 1UL << 32) || 
         Bu8map(input, 1UL << 32) || 
@@ -75,10 +77,18 @@ int my_merge_main() {
             call($u8feed2, Bu8idle(output), ',', '\n');
             call(RDXJfeed, Bu8idle(output), **in);
         }
+
+        // Преобразуем JDR результат в char*
+        size_t resultLength = $len(Bu8cdata(output));
+        result = (char*)malloc(resultLength + 1);
+        strncpy(result, (char*)*Bu8cdata(output), resultLength);
+        result[resultLength] = '\0';
+
         call($u8feed1, Bu8idle(output), '\n');
 
         // Выводим результат на консоль
         call(FILEfeedall, STDOUT_FILENO, Bu8cdata(output));
+        std::cout << result << std::endl;
         std::cout << "finish" << std::endl;
     } catch (...) {
         handleError("An unexpected error occurred.");
@@ -89,6 +99,8 @@ int my_merge_main() {
     Bu8unmap(input);
     Bu8unmap(mergeBuf);
     B$u8cunmap(ins);
+
+    free(result);
 
     return 0;
 }
