@@ -1,4 +1,9 @@
+#include "rocksdb/db.h"
+#include "rocksdb/merge_operator.h"
+#include "rocksdb/options.h"
 #include <iostream>
+#include <sstream>
+#include <memory>
 #include <string>
 #include <vector>
 #include <fcntl.h>
@@ -37,14 +42,9 @@ void handleError(const char* message) {
     exit(EXIT_FAILURE);
 }
 
-int my_merge_main() {
-    // Исходные строки в формате RDX-JDR
-    const char* input1 = "<1:2>,<1:1:3>";
-    const char* input2 = "{3:4,4:5,\"seven\"}";
-
+std::string mergeRDX(const std::string& existing_value, const std::vector<std::string>& operands) {
     char* result;
 
-    // Инициализация буферов
     if (Bu8map(output, 1UL << 32) || 
         Bu8map(input, 1UL << 32) || 
         Bu8map(mergeBuf, 1UL << 32) || 
@@ -53,54 +53,164 @@ int my_merge_main() {
     }
 
     try {
-        // Записываем строки в буферы
+        // Записываем существующее значение в буфер
         u8 **into = Bu8idle(output);
-        strncpy((char*)*into, input1, strlen(input1));
-        *into += strlen(input1);
+        strncpy((char*)*into, existing_value.c_str(), existing_value.length());
+        *into += existing_value.length();
 
-        // Преобразуем строки в формат TLV
-        call(RDXJdrain, Bu8idle(input), Bu8cdata(output));
+        // Преобразуем строку в формат TLV
+        RDXJdrain(Bu8idle(input), Bu8cdata(output));
         Breset(output);
-        call(TLVsplit, B$u8cidle(ins), Bu8cdata(input));
+        TLVsplit(B$u8cidle(ins), Bu8cdata(input));
+
+        // Обрабатываем все операнды
+        for (const auto& operand : operands) {
+            strncpy((char*)*into, operand.c_str(), operand.length());
+            *into += operand.length();
+
+            RDXJdrain(Bu8idle(input), Bu8cdata(output));
+            Breset(output);
+            TLVsplit(B$u8cidle(ins), Bu8cdata(input));
+        }
 
         // Выполняем слияние
-        call(RDXY,    Bu8idle(mergeBuf), B$u8cdata(ins));
+        RDXY(Bu8idle(mergeBuf), B$u8cdata(ins));
         B$u8cunmap(ins);
         B$u8cmap(ins, RDXY_MAX_INPUTS);
-        call(TLVsplit, B$u8cidle(ins), Bu8cdata(mergeBuf));
+        TLVsplit(B$u8cidle(ins), Bu8cdata(mergeBuf));
 
         // Преобразуем результат обратно в формат JDR
         a$dup($u8c, in, B$u8cdata(ins));
-        call(RDXJfeed, Bu8idle(output), **in);
+        RDXJfeed(Bu8idle(output), **in);
         ++*in;
         $eat(in) {
-            call($u8feed2, Bu8idle(output), ',', '\n');
-            call(RDXJfeed, Bu8idle(output), **in);
+            $u8feed2(Bu8idle(output), ',', '\n');
+            RDXJfeed(Bu8idle(output), **in);
         }
 
-        // Преобразуем JDR результат в char*
+        // Преобразуем JDR результат в std::string
         size_t resultLength = $len(Bu8cdata(output));
         result = (char*)malloc(resultLength + 1);
         strncpy(result, (char*)*Bu8cdata(output), resultLength);
         result[resultLength] = '\0';
 
-        call($u8feed1, Bu8idle(output), '\n');
+        std::string final_result(result);
 
-        // Выводим результат на консоль
-        call(FILEfeedall, STDOUT_FILENO, Bu8cdata(output));
-        std::cout << result << std::endl;
-        std::cout << "finish" << std::endl;
+        // Очистка ресурсов
+        free(result);
+        Bu8unmap(output);
+        Bu8unmap(input);
+        Bu8unmap(mergeBuf);
+        B$u8cunmap(ins);
+
+        return final_result;
     } catch (...) {
+        // Очистка ресурсов
+        free(result);
+        Bu8unmap(output);
+        Bu8unmap(input);
+        Bu8unmap(mergeBuf);
+        B$u8cunmap(ins);
         handleError("An unexpected error occurred.");
     }
 
-    // Очистка ресурсов
-    Bu8unmap(output);
-    Bu8unmap(input);
-    Bu8unmap(mergeBuf);
-    B$u8cunmap(ins);
+    return "";
+}
 
-    free(result);
+class MyMerge : public ROCKSDB_NAMESPACE::MergeOperator {
+ public:
+  bool FullMergeV2(const MergeOperationInput& merge_in,
+                   MergeOperationOutput* merge_out) const override {
+    merge_out->new_value.clear();
+    // Обрабатываем существующее значение и операнды
+    std::vector<std::string> operands;
+    for (const auto& operand : merge_in.operand_list) {
+        operands.push_back(operand.ToString());
+    }
+    merge_out->new_value = mergeRDX(
+        merge_in.existing_value ? merge_in.existing_value->ToString() : "{}",
+        operands
+    );
+    return true;
+  }
+
+  const char* Name() const override { return "MyMerge"; }
+};
+
+#if defined(OS_WIN)
+std::string kDBPath = "C:\\Windows\\TEMP\\rocksmergetest";
+std::string kRemoveDirCommand = "rmdir /Q /S ";
+#else
+std::string kDBPath = "/tmp/rocksmergetest";
+std::string kRemoveDirCommand = "rm -rf ";
+#endif
+
+int my_merge_main() {
+    ROCKSDB_NAMESPACE::DB* raw_db;
+    ROCKSDB_NAMESPACE::Status status;
+
+    std::string rm_cmd = kRemoveDirCommand + kDBPath;
+    int ret = system(rm_cmd.c_str());
+    if (ret != 0) {
+        std::cerr << "Error deleting " << kDBPath << ", code: " << ret << std::endl;
+    }
+
+    ROCKSDB_NAMESPACE::Options options;
+    options.create_if_missing = true;
+    options.merge_operator.reset(new MyMerge);
+    status = ROCKSDB_NAMESPACE::DB::Open(options, kDBPath, &raw_db);
+    if (!status.ok()) {
+        std::cerr << "Error opening database: " << status.ToString() << std::endl;
+        return 1;
+    }
+    std::unique_ptr<ROCKSDB_NAMESPACE::DB> db(raw_db);
+
+    std::string command;
+    std::cout << "Enter commands: merge <key> <value> or get <key> (type 'exit' to quit)" << std::endl;
+
+    while (true) {
+        std::cout << "> ";
+        std::getline(std::cin, command);
+        if (command == "exit") {
+            break;
+        }
+
+        std::istringstream iss(command);
+        std::string cmd, key, value;
+        iss >> cmd;
+
+        if (cmd == "merge") {
+            iss >> key >> value;
+            if (!key.empty() && !value.empty()) {
+                ROCKSDB_NAMESPACE::WriteOptions wopts;
+                status = db->Merge(wopts, key, value);
+                if (!status.ok()) {
+                    std::cerr << "Merge failed: " << status.ToString() << std::endl;
+                } else {
+                    std::cout << "Merged key: " << key << " with value: " << value << std::endl;
+                }
+            } else {
+                std::cerr << "Invalid merge command. Usage: merge <key> <value>" << std::endl;
+            }
+        } else if (cmd == "get") {
+            iss >> key;
+            if (!key.empty()) {
+                std::string result;
+                status = db->Get(ROCKSDB_NAMESPACE::ReadOptions(), key, &result);
+                if (status.IsNotFound()) {
+                    std::cout << "Key not found: " << key << std::endl;
+                } else if (!status.ok()) {
+                    std::cerr << "Get failed: " << status.ToString() << std::endl;
+                } else {
+                    std::cout << "Key: " << key << ", Value: " << result << std::endl;
+                }
+            } else {
+                std::cerr << "Invalid get command. Usage: get <key>" << std::endl;
+            }
+        } else {
+            std::cerr << "Unknown command. Supported commands: merge, get, exit" << std::endl;
+        }
+    }
 
     return 0;
 }
