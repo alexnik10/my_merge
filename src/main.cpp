@@ -42,7 +42,12 @@ void handleError(const char* message) {
     exit(EXIT_FAILURE);
 }
 
-std::string mergeRDX(const std::string& existing_value, const std::vector<std::string>& operands) {
+void convertStrTo$(const std::string& s, $u8c into){
+    into[0] = (u8*)s.c_str();
+    into[1] = into[0] + s.length();
+}
+
+std::string mergeRDX(const std::vector<std::string>& operands) {
     char* result;
 
     if (Bu8map(output, 1UL << 32) || 
@@ -53,25 +58,16 @@ std::string mergeRDX(const std::string& existing_value, const std::vector<std::s
     }
 
     try {
-        // Записываем существующее значение в буфер
-        u8 **into = Bu8idle(output);
-        strncpy((char*)*into, existing_value.c_str(), existing_value.length());
-        *into += existing_value.length();
-
-        // Преобразуем строку в формат TLV
-        RDXJdrain(Bu8idle(input), Bu8cdata(output));
-        Breset(output);
-        TLVsplit(B$u8cidle(ins), Bu8cdata(input));
+        $u8c jdrVal;
 
         // Обрабатываем все операнды
+        // Преобразуем строку в формат TLV и записываем в буфер
         for (const auto& operand : operands) {
-            strncpy((char*)*into, operand.c_str(), operand.length());
-            *into += operand.length();
-
-            RDXJdrain(Bu8idle(input), Bu8cdata(output));
-            Breset(output);
-            TLVsplit(B$u8cidle(ins), Bu8cdata(input));
+            convertStrTo$(operand, jdrVal);
+            RDXJdrain(Bu8idle(input), jdrVal);
         }
+
+        TLVsplit(B$u8cidle(ins), Bu8cdata(input));
 
         // Выполняем слияние
         RDXY(Bu8idle(mergeBuf), B$u8cdata(ins));
@@ -124,13 +120,13 @@ class MyMerge : public ROCKSDB_NAMESPACE::MergeOperator {
     merge_out->new_value.clear();
     // Обрабатываем существующее значение и операнды
     std::vector<std::string> operands;
+    if (merge_in.existing_value){
+        operands.push_back(merge_in.existing_value->ToString());
+    }
     for (const auto& operand : merge_in.operand_list) {
         operands.push_back(operand.ToString());
     }
-    merge_out->new_value = mergeRDX(
-        merge_in.existing_value ? merge_in.existing_value->ToString() : "{}",
-        operands
-    );
+    merge_out->new_value = mergeRDX(operands);
     return true;
   }
 
