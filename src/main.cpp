@@ -23,7 +23,6 @@ extern "C" {
 
 u8 *output[4] = {};
 u8 *input[4] = {};
-u8 *mergeBuf[4] = {};
 $u8c *ins[4] = {};
 
 fun pro(TLVsplit, $$u8c idle, $cu8c data) {
@@ -52,7 +51,6 @@ std::string mergeRDX(const std::vector<std::string>& operands) {
 
     if (Bu8map(output, 1UL << 32) || 
         Bu8map(input, 1UL << 32) || 
-        Bu8map(mergeBuf, 1UL << 32) || 
         B$u8cmap(ins, RDXY_MAX_INPUTS)) {
         handleError("Failed to allocate memory for buffers.");
     }
@@ -69,11 +67,14 @@ std::string mergeRDX(const std::vector<std::string>& operands) {
 
         TLVsplit(B$u8cidle(ins), Bu8cdata(input));
 
+        // Сбрасываем input
+        Breset(input);
+
         // Выполняем слияние
-        RDXY(Bu8idle(mergeBuf), B$u8cdata(ins));
+        RDXY(Bu8idle(input), B$u8cdata(ins));
         B$u8cunmap(ins);
         B$u8cmap(ins, RDXY_MAX_INPUTS);
-        TLVsplit(B$u8cidle(ins), Bu8cdata(mergeBuf));
+        TLVsplit(B$u8cidle(ins), Bu8cdata(input));
 
         // Преобразуем результат обратно в формат JDR
         a$dup($u8c, in, B$u8cdata(ins));
@@ -96,7 +97,6 @@ std::string mergeRDX(const std::vector<std::string>& operands) {
         free(result);
         Bu8unmap(output);
         Bu8unmap(input);
-        Bu8unmap(mergeBuf);
         B$u8cunmap(ins);
 
         return final_result;
@@ -105,7 +105,6 @@ std::string mergeRDX(const std::vector<std::string>& operands) {
         free(result);
         Bu8unmap(output);
         Bu8unmap(input);
-        Bu8unmap(mergeBuf);
         B$u8cunmap(ins);
         handleError("An unexpected error occurred.");
     }
