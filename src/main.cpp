@@ -19,9 +19,29 @@ extern "C" {
 }
 
 
-u8 *buf1[4] = {};
-u8 *buf2[4] = {};
-$u8c *ins[4] = {};
+class RDXBufferManager {
+public:
+    u8 *buf1[4] = {};
+    u8 *buf2[4] = {};
+    $u8c *ins[4] = {};
+
+    RDXBufferManager() {
+        // Почему-то при инициализации переменных тут
+        // программа падает  с ошибкой Segmentation fault (core dumped)
+        // это происходит в mergeRDX
+        if (
+            Bu8map(buf2, 1UL << 32) || 
+            B$u8cmap(ins, RDXY_MAX_INPUTS)) {
+            throw std::runtime_error("Failed to allocate memory for buffers.");
+        }
+    }
+
+    ~RDXBufferManager() {
+        Bu8unmap(buf1);
+        Bu8unmap(buf2);
+        B$u8cunmap(ins);
+    }
+};
 
 fun pro(TLVsplit, $$u8c idle, $cu8c data) {
     sane($ok(idle) && $ok(data));
@@ -44,65 +64,62 @@ void convertStrTo$(const std::string& s, $u8c into){
     into[1] = into[0] + s.length();
 }
 
-std::string mergeRDX(const std::vector<std::string>& operands) {
+std::string mergeRDX(const std::vector<std::string>& operands, RDXBufferManager& buffers) {
     char* result;
 
-    if (Bu8map(buf1, 1UL << 32) || 
-        Bu8map(buf2, 1UL << 32) || 
-        B$u8cmap(ins, RDXY_MAX_INPUTS)) {
-        handleError("Failed to allocate memory for buffers.");
-    }
+    // Если инициализировать переменные здеьс,
+    // то всё работает.
+    Bu8map(buffers.buf1, 1UL << 32);
 
     try {
         $u8c jdrVal;
+        printf("Starting mergeRDX: b[0] = %p, b[1] = %p, b[2] = %p, b[3] = %p\n", 
+            (void*)buffers.buf1[0], (void*)buffers.buf1[1], (void*)buffers.buf1[2], (void*)buffers.buf1[3]);
 
         // Обрабатываем все операнды
         // Преобразуем строку в формат TLV и записываем в буфер
         for (const auto& operand : operands) {
             convertStrTo$(operand, jdrVal);
-            RDXJdrain(Bu8idle(buf1), jdrVal);
+            RDXJdrain(Bu8idle(buffers.buf1), jdrVal);
         }
+        printf("After tlv: b[0] = %p, b[1] = %p, b[2] = %p, b[3] = %p\n", 
+            (void*)buffers.buf1[0], (void*)buffers.buf1[1], (void*)buffers.buf1[2], (void*)buffers.buf1[3]);
 
-        TLVsplit(B$u8cidle(ins), Bu8cdata(buf1));
+        TLVsplit(B$u8cidle(buffers.ins), Bu8cdata(buffers.buf1));
 
         // Выполняем слияние
-        RDXY(Bu8idle(buf2), B$u8cdata(ins));
+        RDXY(Bu8idle(buffers.buf2), B$u8cdata(buffers.ins));
 
-        Breset(buf1);
-        Breset(ins);
+        Breset(buffers.buf1);
+        Breset(buffers.ins);
 
-        TLVsplit(B$u8cidle(ins), Bu8cdata(buf2));
+        TLVsplit(B$u8cidle(buffers.ins), Bu8cdata(buffers.buf2));
 
         // Преобразуем результат обратно в формат JDR
-        a$dup($u8c, in, B$u8cdata(ins));
-        RDXJfeed(Bu8idle(buf1), **in);
+        a$dup($u8c, in, B$u8cdata(buffers.ins));
+        RDXJfeed(Bu8idle(buffers.buf1), **in);
         ++*in;
         $eat(in) {
-            $u8feed2(Bu8idle(buf1), ',', '\n');
-            RDXJfeed(Bu8idle(buf1), **in);
+            $u8feed2(Bu8idle(buffers.buf1), ',', '\n');
+            RDXJfeed(Bu8idle(buffers.buf1), **in);
         }
 
         // Преобразуем JDR результат в std::string
-        size_t resultLength = $len(Bu8cdata(buf1));
+        size_t resultLength = $len(Bu8cdata(buffers.buf1));
         result = (char*)malloc(resultLength + 1);
-        strncpy(result, (char*)*Bu8cdata(buf1), resultLength);
+        strncpy(result, (char*)*Bu8cdata(buffers.buf1), resultLength);
         result[resultLength] = '\0';
 
         std::string final_result(result);
 
-        // Очистка ресурсов
         free(result);
-        Bu8unmap(buf1);
-        Bu8unmap(buf2);
-        B$u8cunmap(ins);
+        Breset(buffers.buf1);
+        Breset(buffers.buf2);
+        Breset(buffers.ins);
 
         return final_result;
     } catch (...) {
-        // Очистка ресурсов
         free(result);
-        Bu8unmap(buf1);
-        Bu8unmap(buf2);
-        B$u8cunmap(ins);
         handleError("An unexpected error occurred.");
     }
 
@@ -111,7 +128,15 @@ std::string mergeRDX(const std::vector<std::string>& operands) {
 
 class MyMerge : public ROCKSDB_NAMESPACE::MergeOperator {
  public:
-  bool FullMergeV2(const MergeOperationInput& merge_in,
+   mutable RDXBufferManager buffers;
+
+  MyMerge() : buffers() {
+    buffers = RDXBufferManager();
+    printf("Before: b[0] = %p, b[1] = %p, b[2] = %p, b[3] = %p\n", 
+        (void*)buffers.buf1[0], (void*)buffers.buf1[1], (void*)buffers.buf1[2], (void*)buffers.buf1[3]);
+  }
+
+bool FullMergeV2(const MergeOperationInput& merge_in,
                    MergeOperationOutput* merge_out) const override {
     merge_out->new_value.clear();
     // Обрабатываем существующее значение и операнды
@@ -122,7 +147,7 @@ class MyMerge : public ROCKSDB_NAMESPACE::MergeOperator {
     for (const auto& operand : merge_in.operand_list) {
         operands.push_back(operand.ToString());
     }
-    merge_out->new_value = mergeRDX(operands);
+    merge_out->new_value = mergeRDX(operands, buffers);
     return true;
   }
 
