@@ -6,8 +6,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <fcntl.h>
-#include <unistd.h>
 
 extern "C" {
     #include <fcntl.h>
@@ -21,9 +19,8 @@ extern "C" {
 }
 
 
-u8 *output[4] = {};
-u8 *input[4] = {};
-u8 *mergeBuf[4] = {};
+u8 *buf1[4] = {};
+u8 *buf2[4] = {};
 $u8c *ins[4] = {};
 
 fun pro(TLVsplit, $$u8c idle, $cu8c data) {
@@ -50,9 +47,8 @@ void convertStrTo$(const std::string& s, $u8c into){
 std::string mergeRDX(const std::vector<std::string>& operands) {
     char* result;
 
-    if (Bu8map(output, 1UL << 32) || 
-        Bu8map(input, 1UL << 32) || 
-        Bu8map(mergeBuf, 1UL << 32) || 
+    if (Bu8map(buf1, 1UL << 32) || 
+        Bu8map(buf2, 1UL << 32) || 
         B$u8cmap(ins, RDXY_MAX_INPUTS)) {
         handleError("Failed to allocate memory for buffers.");
     }
@@ -64,48 +60,48 @@ std::string mergeRDX(const std::vector<std::string>& operands) {
         // Преобразуем строку в формат TLV и записываем в буфер
         for (const auto& operand : operands) {
             convertStrTo$(operand, jdrVal);
-            RDXJdrain(Bu8idle(input), jdrVal);
+            RDXJdrain(Bu8idle(buf1), jdrVal);
         }
 
-        TLVsplit(B$u8cidle(ins), Bu8cdata(input));
+        TLVsplit(B$u8cidle(ins), Bu8cdata(buf1));
 
         // Выполняем слияние
-        RDXY(Bu8idle(mergeBuf), B$u8cdata(ins));
-        B$u8cunmap(ins);
-        B$u8cmap(ins, RDXY_MAX_INPUTS);
-        TLVsplit(B$u8cidle(ins), Bu8cdata(mergeBuf));
+        RDXY(Bu8idle(buf2), B$u8cdata(ins));
+
+        Breset(buf1);
+        Breset(ins);
+
+        TLVsplit(B$u8cidle(ins), Bu8cdata(buf2));
 
         // Преобразуем результат обратно в формат JDR
         a$dup($u8c, in, B$u8cdata(ins));
-        RDXJfeed(Bu8idle(output), **in);
+        RDXJfeed(Bu8idle(buf1), **in);
         ++*in;
         $eat(in) {
-            $u8feed2(Bu8idle(output), ',', '\n');
-            RDXJfeed(Bu8idle(output), **in);
+            $u8feed2(Bu8idle(buf1), ',', '\n');
+            RDXJfeed(Bu8idle(buf1), **in);
         }
 
         // Преобразуем JDR результат в std::string
-        size_t resultLength = $len(Bu8cdata(output));
+        size_t resultLength = $len(Bu8cdata(buf1));
         result = (char*)malloc(resultLength + 1);
-        strncpy(result, (char*)*Bu8cdata(output), resultLength);
+        strncpy(result, (char*)*Bu8cdata(buf1), resultLength);
         result[resultLength] = '\0';
 
         std::string final_result(result);
 
         // Очистка ресурсов
         free(result);
-        Bu8unmap(output);
-        Bu8unmap(input);
-        Bu8unmap(mergeBuf);
+        Bu8unmap(buf1);
+        Bu8unmap(buf2);
         B$u8cunmap(ins);
 
         return final_result;
     } catch (...) {
         // Очистка ресурсов
         free(result);
-        Bu8unmap(output);
-        Bu8unmap(input);
-        Bu8unmap(mergeBuf);
+        Bu8unmap(buf1);
+        Bu8unmap(buf2);
         B$u8cunmap(ins);
         handleError("An unexpected error occurred.");
     }
