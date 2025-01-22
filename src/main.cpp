@@ -18,6 +18,7 @@ extern "C" {
     #include "abc/INT.h"
 }
 
+ABC_INIT
 
 class RDXBufferManager {
 public:
@@ -149,26 +150,46 @@ std::string kDBPath = "/tmp/rocksmergetest";
 std::string kRemoveDirCommand = "rm -rf ";
 #endif
 
-int my_merge_main() {
-    rocksdb::DB* raw_db;
-    rocksdb::Status status;
-
+void deleteDBData() {
     std::string rm_cmd = kRemoveDirCommand + kDBPath;
     int ret = system(rm_cmd.c_str());
     if (ret != 0) {
         std::cerr << "Error deleting " << kDBPath << ", code: " << ret << std::endl;
     }
+}
 
+rocksdb::Status openRocksDB(rocksdb::DB*& db){
     rocksdb::Options options;
     options.create_if_missing = true;
     options.merge_operator.reset(new MyMerge);
-    status = rocksdb::DB::Open(options, kDBPath, &raw_db);
-    if (!status.ok()) {
-        std::cerr << "Error opening database: " << status.ToString() << std::endl;
-        return 1;
-    }
-    std::unique_ptr<rocksdb::DB> db(raw_db);
 
+    return rocksdb::DB::Open(options, kDBPath, &db);
+}
+
+void handleMergeCommand(rocksdb::DB& db, const std::string& key, const std::string& value) {
+    auto status = db.Merge(rocksdb::WriteOptions(), key, value);
+
+    if (!status.ok()) {
+        std::cerr << "Merge failed: " << status.ToString() << std::endl;
+    } else {
+        std::cout << "Merged key: " << key << " with value: " << value << std::endl;
+    }
+}
+
+void handleGetCommand(rocksdb::DB& db, const std::string& key) {
+    std::string result;
+    auto status = db.Get(rocksdb::ReadOptions(), key, &result);
+
+    if (status.IsNotFound()) {
+        std::cout << "Key not found: " << key << std::endl;
+    } else if (!status.ok()) {
+        std::cerr << "Get failed: " << status.ToString() << std::endl;
+    } else {
+        std::cout << "Key: " << key << ", Value: " << result << std::endl;
+    }
+}
+
+void processCommands(rocksdb::DB& db){
     std::string command;
     std::cout << "Enter commands: merge <key> <value> or get <key> (type 'exit' to quit)" << std::endl;
 
@@ -186,28 +207,14 @@ int my_merge_main() {
         if (cmd == "merge") {
             iss >> key >> value;
             if (!key.empty() && !value.empty()) {
-                rocksdb::WriteOptions wopts;
-                status = db->Merge(wopts, key, value);
-                if (!status.ok()) {
-                    std::cerr << "Merge failed: " << status.ToString() << std::endl;
-                } else {
-                    std::cout << "Merged key: " << key << " with value: " << value << std::endl;
-                }
+                handleMergeCommand(db, key, value);
             } else {
                 std::cerr << "Invalid merge command. Usage: merge <key> <value>" << std::endl;
             }
         } else if (cmd == "get") {
             iss >> key;
             if (!key.empty()) {
-                std::string result;
-                status = db->Get(rocksdb::ReadOptions(), key, &result);
-                if (status.IsNotFound()) {
-                    std::cout << "Key not found: " << key << std::endl;
-                } else if (!status.ok()) {
-                    std::cerr << "Get failed: " << status.ToString() << std::endl;
-                } else {
-                    std::cout << "Key: " << key << ", Value: " << result << std::endl;
-                }
+                handleGetCommand(db, key);
             } else {
                 std::cerr << "Invalid get command. Usage: get <key>" << std::endl;
             }
@@ -215,8 +222,27 @@ int my_merge_main() {
             std::cerr << "Unknown command. Supported commands: merge, get, exit" << std::endl;
         }
     }
+}
 
+int my_merge_main() {
+    deleteDBData();
+
+    rocksdb::DB* db;
+    auto status = openRocksDB(db);
+
+    if (!status.ok()) {
+        std::cerr << "Error opening database: " << status.ToString() << std::endl;
+        return 1;
+    }
+
+    processCommands(*db);
+
+    delete db;
+    
     return 0;
 }
 
-MAIN(my_merge_main)
+int main() {
+    int ret = my_merge_main();
+    return ret;
+}
