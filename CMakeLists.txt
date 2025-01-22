@@ -9,10 +9,6 @@ set(ROCKSDB_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/rocksdb/include")
 find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
 
-add_executable(merge_operator_example src/merge_operator_example.cpp)
-target_include_directories(merge_operator_example PRIVATE ${ROCKSDB_INCLUDE_DIR})
-target_link_libraries(merge_operator_example PRIVATE rocksdb z bz2 lz4 zstd snappy)
-
 add_subdirectory(librdx)
 
 add_executable(my_merge src/main.cpp)
