@@ -62,14 +62,16 @@ void handleError(const char* message) {
     exit(EXIT_FAILURE);
 }
 
-void convertStrTo$(const std::string& s, $u8c into){
-    into[0] = (u8*)s.c_str();
-    into[1] = into[0] + s.length();
+void convertSliceTo$u8(const rocksdb::Slice& s, $u8c into){
+    into[0] = (u8*)s.data();
+    into[1] = into[0] + s.size();
 }
 
-std::string mergeRDX(const std::vector<std::string>& operands, RDXBufferManager& buffers) {
-    char* result;
+std::string convert$u8ToStr($cu8c data){
+    return std::string((char*)$head(data), $len(data));
+}
 
+std::string mergeRDX(const std::vector<rocksdb::Slice>& operands, RDXBufferManager& buffers) {
     buffers.initializeBuffers();
 
     try {
@@ -78,7 +80,7 @@ std::string mergeRDX(const std::vector<std::string>& operands, RDXBufferManager&
         // Обрабатываем все операнды
         // Преобразуем строку в формат TLV и записываем в буфер
         for (const auto& operand : operands) {
-            convertStrTo$(operand, jdrVal);
+            convertSliceTo$u8(operand, jdrVal);
             RDXJdrain(Bu8idle(buffers.buf1), jdrVal);
         }
 
@@ -102,28 +104,21 @@ std::string mergeRDX(const std::vector<std::string>& operands, RDXBufferManager&
         }
 
         // Преобразуем JDR результат в std::string
-        size_t resultLength = $len(Bu8cdata(buffers.buf1));
-        result = (char*)malloc(resultLength + 1);
-        strncpy(result, (char*)*Bu8cdata(buffers.buf1), resultLength);
-        result[resultLength] = '\0';
+        std::string merge_result = convert$u8ToStr(Bu8cdata(buffers.buf1));
 
-        std::string final_result(result);
-
-        free(result);
         Breset(buffers.buf1);
         Breset(buffers.buf2);
         Breset(buffers.ins);
 
-        return final_result;
+        return merge_result;
     } catch (...) {
-        free(result);
         handleError("An unexpected error occurred.");
     }
 
     return "";
 }
 
-class MyMerge : public ROCKSDB_NAMESPACE::MergeOperator {
+class MyMerge : public rocksdb::MergeOperator {
  public:
    mutable RDXBufferManager buffers;
 
@@ -135,12 +130,9 @@ bool FullMergeV2(const MergeOperationInput& merge_in,
                    MergeOperationOutput* merge_out) const override {
     merge_out->new_value.clear();
     // Обрабатываем существующее значение и операнды
-    std::vector<std::string> operands;
+    std::vector<rocksdb::Slice> operands(merge_in.operand_list);
     if (merge_in.existing_value){
-        operands.push_back(merge_in.existing_value->ToString());
-    }
-    for (const auto& operand : merge_in.operand_list) {
-        operands.push_back(operand.ToString());
+        operands.push_back(*merge_in.existing_value);
     }
     merge_out->new_value = mergeRDX(operands, buffers);
     return true;
@@ -158,8 +150,8 @@ std::string kRemoveDirCommand = "rm -rf ";
 #endif
 
 int my_merge_main() {
-    ROCKSDB_NAMESPACE::DB* raw_db;
-    ROCKSDB_NAMESPACE::Status status;
+    rocksdb::DB* raw_db;
+    rocksdb::Status status;
 
     std::string rm_cmd = kRemoveDirCommand + kDBPath;
     int ret = system(rm_cmd.c_str());
@@ -167,15 +159,15 @@ int my_merge_main() {
         std::cerr << "Error deleting " << kDBPath << ", code: " << ret << std::endl;
     }
 
-    ROCKSDB_NAMESPACE::Options options;
+    rocksdb::Options options;
     options.create_if_missing = true;
     options.merge_operator.reset(new MyMerge);
-    status = ROCKSDB_NAMESPACE::DB::Open(options, kDBPath, &raw_db);
+    status = rocksdb::DB::Open(options, kDBPath, &raw_db);
     if (!status.ok()) {
         std::cerr << "Error opening database: " << status.ToString() << std::endl;
         return 1;
     }
-    std::unique_ptr<ROCKSDB_NAMESPACE::DB> db(raw_db);
+    std::unique_ptr<rocksdb::DB> db(raw_db);
 
     std::string command;
     std::cout << "Enter commands: merge <key> <value> or get <key> (type 'exit' to quit)" << std::endl;
@@ -194,7 +186,7 @@ int my_merge_main() {
         if (cmd == "merge") {
             iss >> key >> value;
             if (!key.empty() && !value.empty()) {
-                ROCKSDB_NAMESPACE::WriteOptions wopts;
+                rocksdb::WriteOptions wopts;
                 status = db->Merge(wopts, key, value);
                 if (!status.ok()) {
                     std::cerr << "Merge failed: " << status.ToString() << std::endl;
@@ -208,7 +200,7 @@ int my_merge_main() {
             iss >> key;
             if (!key.empty()) {
                 std::string result;
-                status = db->Get(ROCKSDB_NAMESPACE::ReadOptions(), key, &result);
+                status = db->Get(rocksdb::ReadOptions(), key, &result);
                 if (status.IsNotFound()) {
                     std::cout << "Key not found: " << key << std::endl;
                 } else if (!status.ok()) {
