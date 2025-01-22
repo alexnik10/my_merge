@@ -11,7 +11,11 @@ find_package(BZip2 REQUIRED)
 
 add_subdirectory(librdx)
 
-add_executable(my_merge src/main.cpp)
+add_executable(my_merge
+    src/main.cpp
+    src/RdxMerger.cpp
+    src/RdxMergeOperator.cpp
+)
 target_include_directories(my_merge PRIVATE librdx)
 target_include_directories(my_merge PRIVATE librdx/rdx)
 target_include_directories(my_merge PRIVATE ${ROCKSDB_INCLUDE_DIR})
