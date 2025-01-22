@@ -20,126 +20,116 @@ extern "C" {
 
 ABC_INIT
 
-class RDXBufferManager {
-public:
+class RdxMerger {
+private:
     u8 *buf1[4] = {};
     u8 *buf2[4] = {};
     $u8c *ins[4] = {};
 
-    RDXBufferManager() = default;
-
     void initializeBuffers() {
-        if (!buf1[0] && Bu8map(buf1, 1UL << 32)) {
-            throw std::runtime_error("Failed to allocate buf1.");
-        }
-        if (!buf2[0] && Bu8map(buf2, 1UL << 32)) {
-            throw std::runtime_error("Failed to allocate buf2.");
-        }
-        if (!ins[0] && B$u8cmap(ins, RDXY_MAX_INPUTS)) {
-            throw std::runtime_error("Failed to allocate ins.");
-        }
+        Bu8map(buf1, 1UL << 32);
+        Bu8map(buf2, 1UL << 32);
+        B$u8cmap(ins, RDXY_MAX_INPUTS);
     }
 
-    ~RDXBufferManager() {
+    void cleanupBuffers() {
         Bu8unmap(buf1);
         Bu8unmap(buf2);
         B$u8cunmap(ins);
     }
+
+    void convertSliceTo$u8(const rocksdb::Slice& s, $u8c into) {
+        into[0] = (u8*)s.data();
+        into[1] = into[0] + s.size();
+    }
+
+    std::string convert$u8ToStr($cu8c data) {
+        return std::string((char*)$head(data), $len(data));
+    }
+
+    ok64 splitTLV($$u8c idle, $cu8c data) {
+        sane($ok(idle) && $ok(data));
+        a$dup(u8c, d, data);
+        while (!$empty(d)) {
+            $u8c next = {};
+            call(TLVdrain$, next, d);
+            call($$u8cfeed1, idle, next);
+        }
+        done;
+    }
+
+public:
+    RdxMerger() {
+        initializeBuffers();
+    }
+
+    ~RdxMerger() {
+        cleanupBuffers();
+    }
+
+    std::string merge(const std::vector<rocksdb::Slice>& operands) {
+        try {
+            $u8c jdrVal;
+
+            for (const auto& operand : operands) {
+                convertSliceTo$u8(operand, jdrVal);
+                RDXJdrain(Bu8idle(buf1), jdrVal);
+            }
+
+            splitTLV(B$u8cidle(ins), Bu8cdata(buf1));
+
+            RDXY(Bu8idle(buf2), B$u8cdata(ins));
+
+            Breset(buf1);
+            Breset(ins);
+
+            splitTLV(B$u8cidle(ins), Bu8cdata(buf2));
+
+            a$dup($u8c, in, B$u8cdata(ins));
+            RDXJfeed(Bu8idle(buf1), **in);
+            ++*in;
+            $eat(in) {
+                $u8feed2(Bu8idle(buf1), ',', '\n');
+                RDXJfeed(Bu8idle(buf1), **in);
+            }
+
+            std::string merge_result = convert$u8ToStr(Bu8cdata(buf1));
+
+            Breset(buf1);
+            Breset(buf2);
+            Breset(ins);
+
+            return merge_result;
+        } catch (...) {
+            throw std::runtime_error("An unexpected error occurred during merging.");
+        }
+    }
 };
 
-fun pro(TLVsplit, $$u8c idle, $cu8c data) {
-    sane($ok(idle) && $ok(data));
-    a$dup(u8c, d, data);
-    while (!$empty(d)) {
-        $u8c next = {};
-        call(TLVdrain$, next, d);
-        call($$u8cfeed1, idle, next);
-    }
-    done;
-}
 
-void handleError(const char* message) {
-    std::cerr << "Error: " << message << std::endl;
-    exit(EXIT_FAILURE);
-}
-
-void convertSliceTo$u8(const rocksdb::Slice& s, $u8c into){
-    into[0] = (u8*)s.data();
-    into[1] = into[0] + s.size();
-}
-
-std::string convert$u8ToStr($cu8c data){
-    return std::string((char*)$head(data), $len(data));
-}
-
-std::string mergeRDX(const std::vector<rocksdb::Slice>& operands, RDXBufferManager& buffers) {
-    buffers.initializeBuffers();
-
-    try {
-        $u8c jdrVal;
-
-        // Обрабатываем все операнды
-        // Преобразуем строку в формат TLV и записываем в буфер
-        for (const auto& operand : operands) {
-            convertSliceTo$u8(operand, jdrVal);
-            RDXJdrain(Bu8idle(buffers.buf1), jdrVal);
-        }
-
-        TLVsplit(B$u8cidle(buffers.ins), Bu8cdata(buffers.buf1));
-
-        // Выполняем слияние
-        RDXY(Bu8idle(buffers.buf2), B$u8cdata(buffers.ins));
-
-        Breset(buffers.buf1);
-        Breset(buffers.ins);
-
-        TLVsplit(B$u8cidle(buffers.ins), Bu8cdata(buffers.buf2));
-
-        // Преобразуем результат обратно в формат JDR
-        a$dup($u8c, in, B$u8cdata(buffers.ins));
-        RDXJfeed(Bu8idle(buffers.buf1), **in);
-        ++*in;
-        $eat(in) {
-            $u8feed2(Bu8idle(buffers.buf1), ',', '\n');
-            RDXJfeed(Bu8idle(buffers.buf1), **in);
-        }
-
-        // Преобразуем JDR результат в std::string
-        std::string merge_result = convert$u8ToStr(Bu8cdata(buffers.buf1));
-
-        Breset(buffers.buf1);
-        Breset(buffers.buf2);
-        Breset(buffers.ins);
-
-        return merge_result;
-    } catch (...) {
-        handleError("An unexpected error occurred.");
-    }
-
-    return "";
-}
-
-class MyMerge : public rocksdb::MergeOperator {
+class RdxMergeOperator : public rocksdb::MergeOperator {
  public:
-   mutable RDXBufferManager buffers;
+   mutable RdxMerger merger;
 
-  MyMerge() : buffers() {
-    buffers = RDXBufferManager();
-  }
+    RdxMergeOperator() : merger() {}
 
 bool FullMergeV2(const MergeOperationInput& merge_in,
                    MergeOperationOutput* merge_out) const override {
     merge_out->new_value.clear();
-    // Обрабатываем существующее значение и операнды
     std::vector<rocksdb::Slice> operands(merge_in.operand_list);
     if (merge_in.existing_value){
         operands.push_back(*merge_in.existing_value);
     }
-    merge_out->new_value = mergeRDX(operands, buffers);
-    return true;
+    try {
+        merge_out->new_value = merger.merge(operands);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Merge error: " << e.what() << std::endl;
+        return false;
+    }
   }
 
-  const char* Name() const override { return "MyMerge"; }
+  const char* Name() const override { return "RdxMergeOperator"; }
 };
 
 #if defined(OS_WIN)
@@ -161,7 +151,7 @@ void deleteDBData() {
 rocksdb::Status openRocksDB(rocksdb::DB*& db){
     rocksdb::Options options;
     options.create_if_missing = true;
-    options.merge_operator.reset(new MyMerge);
+    options.merge_operator.reset(new RdxMergeOperator);
 
     return rocksdb::DB::Open(options, kDBPath, &db);
 }
