@@ -2,6 +2,30 @@
 
 ABC_INIT
 
+namespace {
+
+void convertSliceTo$u8(const rocksdb::Slice& s, $u8c into) {
+    into[0] = (u8*)s.data();
+    into[1] = into[0] + s.size();
+}
+
+std::string convert$u8ToStr($cu8c data) {
+    return std::string((char*)$head(data), $len(data));
+}
+
+ok64 splitTLV($$u8c idle, $cu8c data) {
+    sane($ok(idle) && $ok(data));
+    a$dup(u8c, d, data);
+    while (!$empty(d)) {
+        $u8c next = {};
+        call(TLVdrain$, next, d);
+        call($$u8cfeed1, idle, next);
+    }
+    done;
+}
+
+} // namespace
+
 void RdxMerger::initializeBuffers() {
         Bu8map(buf1, 1UL << 32);
         Bu8map(buf2, 1UL << 32);
@@ -12,26 +36,6 @@ void RdxMerger::cleanupBuffers() {
     Bu8unmap(buf1);
     Bu8unmap(buf2);
     B$u8cunmap(ins);
-}
-
-void RdxMerger::convertSliceTo$u8(const rocksdb::Slice& s, $u8c into) {
-    into[0] = (u8*)s.data();
-    into[1] = into[0] + s.size();
-}
-
-std::string RdxMerger::convert$u8ToStr($cu8c data) {
-    return std::string((char*)$head(data), $len(data));
-}
-
-ok64 RdxMerger::splitTLV($$u8c idle, $cu8c data) {
-    sane($ok(idle) && $ok(data));
-    a$dup(u8c, d, data);
-    while (!$empty(d)) {
-        $u8c next = {};
-        call(TLVdrain$, next, d);
-        call($$u8cfeed1, idle, next);
-    }
-    done;
 }
 
 RdxMerger::RdxMerger() {

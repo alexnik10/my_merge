@@ -20,9 +20,6 @@ private:
 
     void initializeBuffers();
     void cleanupBuffers();
-    void convertSliceTo$u8(const rocksdb::Slice& s, $u8c into);
-    std::string convert$u8ToStr($cu8c data);
-    ok64 splitTLV($$u8c idle, $cu8c data);
 
 public:
     RdxMerger();
