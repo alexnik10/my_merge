@@ -1,4 +1,5 @@
 ## Добавление merge оператора из rdx в rocksdb
+Консольная утилита с примером работы merge-а из [RDX](https://github.com/gritzko/librdx) в merge-операторе [RocksDB](https://github.com/facebook/rocksdb).
 
 ### Установка RocksDb
 Перед запуском проекта нужно собрать RocksDb и установить недостающие библиотеки.
@@ -24,4 +25,11 @@ make static_lib EXTRA_CXXFLAGS=-frtti
 ```
 cmake .
 make
+```
+
+### Запуск программы
+Для запуска утилиты дайте доступ на исполенеие собранному бинарнику, потом запускайте саму программу:
+```
+chmod +x rdx_merge
+./rdx_merge
 ```
